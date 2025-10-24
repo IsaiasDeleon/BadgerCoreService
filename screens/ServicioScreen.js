@@ -8,10 +8,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   Linking,
+  RefreshControl,
 } from 'react-native';
 import DropDownPicker from 'react-native-dropdown-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
+
+const PDF_BASE = 'https://toolshop.cloud/Badger/uploads/serviciosPDF/';
 
 const ServiciosListaScreen = ({ navigation }) => {
   const [clientes, setClientes] = useState([]);
@@ -24,25 +27,25 @@ const ServiciosListaScreen = ({ navigation }) => {
   const [dropdownItems, setDropdownItems] = useState([]);
 
   const [userId, setUserId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false); // 👈 nuevo estado para refresh
+
   useEffect(() => {
     cargarUsuario();
     fetchClientes();
   }, []);
-  
+
   const cargarUsuario = async () => {
     const usuario = await AsyncStorage.getItem('usuario');
     if (usuario) {
       const parsed = JSON.parse(usuario);
       setUserId(parsed.id);
-  
-      // ⏬ Llamamos a buscarServicios apenas obtenemos el ID del usuario
       buscarServicios(parsed.id);
     }
   };
+
   useFocusEffect(
     React.useCallback(() => {
       const nuevoId = navigation.getState()?.routes?.find(r => r.name === 'Servicios')?.params?.nuevoId;
-      console.log(nuevoId)
       if (nuevoId) {
         buscarServicios(userId, () => {
           navigation.navigate('DetalleServicio', { idServicio: nuevoId });
@@ -52,10 +55,10 @@ const ServiciosListaScreen = ({ navigation }) => {
       }
     }, [navigation, userId])
   );
-  
+
   const buscarServicios = async (idU = userId) => {
     setCargando(true);
-  
+
     try {
       const res = await fetch('https://toolshop.cloud/Badger/controlador/backMovil/servicios.php?v=2', {
         method: 'POST',
@@ -63,13 +66,11 @@ const ServiciosListaScreen = ({ navigation }) => {
         body: `idCliente=${clienteSeleccionado || ''}&folio=${busquedaFolio}&idUsuario=${idU}`,
       });
       const data = await res.json();
-      console.log(data)
       setServicios(data);
     } catch (error) {
       console.error('Error al buscar servicios:', error);
-    
     }
-  
+
     setCargando(false);
   };
 
@@ -77,14 +78,12 @@ const ServiciosListaScreen = ({ navigation }) => {
     try {
       const res = await fetch('https://toolshop.cloud/Badger/controlador/backMovil/clientes.php?v=1', {
         method: 'GET',
-        headers: {
-          Accept: 'application/json',
-        },
+        headers: { Accept: 'application/json' },
       });
       const text = await res.text();
       const data = JSON.parse(text);
       setClientes(data);
-      const opciones = data.map((c) => ({
+      const opciones = data.map(c => ({
         label: c.nombre,
         value: c.id,
       }));
@@ -94,7 +93,22 @@ const ServiciosListaScreen = ({ navigation }) => {
     }
   };
 
+  // URL del PDF: si hay pdfReporte (no vacío/NULL) usa carpeta de serviciosPDF, si no, genera con Test.php
+  const getPdfUrl = (serv) => {
+    const name = (serv?.pdfReporte || '').toString().trim();
+    const hasPdf = !!name && name !== 'NULL';
+    return hasPdf
+      ? `${PDF_BASE}${encodeURIComponent(name)}`
+      : `https://toolshop.cloud/Badger/controlador/PDF/Test.php?id=${serv.id}`;
+  };
 
+  // 👇 función para manejar el refresh
+  const onRefresh = async () => {
+    setRefreshing(true);
+    cargarUsuario();
+    await buscarServicios();
+    setRefreshing(false);
+  };
 
   return (
     <View style={styles.container}>
@@ -142,44 +156,41 @@ const ServiciosListaScreen = ({ navigation }) => {
       {cargando ? (
         <ActivityIndicator size="large" color="#205c98" />
       ) : (
-        <ScrollView>
+        <ScrollView
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#205c98']} />
+          }
+        >
           {servicios.map((serv, idx) => (
-  <TouchableOpacity
-    key={idx}
-    style={[
-      styles.card,
-      serv.Terminado == 1 && styles.cardTerminado // Aplica estilo si está terminado
-    ]}
-    onPress={() => navigation.navigate('DetalleServicio', { idServicio: serv.id })}
-  >
-    <Text style={styles.cardTitle}>Folio: {serv.folio}</Text>
-    <Text style={styles.cardText}>Cliente: {serv.cliente}</Text>
-    <Text style={styles.cardText}>Ubicación: {serv.ubicacion}</Text>
-    <Text style={styles.cardText}>
-      Descripción del servicio:  
-      <Text style={[styles.cardText, { fontWeight: 'bold', color: '#205c98' }]}>
-        {serv.descripcionServicio}
-      </Text>
-    </Text>
-    <Text style={styles.cardText}>Fecha registro: {serv.fechaInicio}</Text>
+            <TouchableOpacity
+              key={idx}
+              style={[styles.card, serv.Terminado == 1 && styles.cardTerminado]}
+              onPress={() => navigation.navigate('DetalleServicio', { idServicio: serv.id })}
+            >
+              <Text style={styles.cardTitle}>Folio: {serv.folio}</Text>
+              <Text style={styles.cardText}>Cliente: {serv.cliente}</Text>
+              <Text style={styles.cardText}>Ubicación: {serv.ubicacion}</Text>
+              <Text style={styles.cardText}>
+                Descripción del servicio:{' '}
+                <Text style={[styles.cardText, { fontWeight: 'bold', color: '#205c98' }]}>
+                  {serv.descripcionServicio}
+                </Text>
+              </Text>
+              <Text style={styles.cardText}>Fecha registro: {serv.fechaInicio}</Text>
 
-    {serv.Terminado == 1 && (
-      <>
-      <Text style={styles.textoTerminado}>✅ Servicio Terminado</Text>
-      <TouchableOpacity
-        style={styles.botonPDF}
-        onPress={() => {
-          const url = `https://toolshop.cloud/Badger/controlador/PDF/Test.php?id=${serv.id}`;
-          Linking.openURL(url);
-        }}
-      >
-        <Text style={styles.botonTexto}>Ver PDF</Text>
-      </TouchableOpacity>
-    </>
-    )}
-  </TouchableOpacity>
-))}
-
+              {serv.Terminado == 1 && (
+                <>
+                  <Text style={styles.textoTerminado}>✅ Servicio Terminado</Text>
+                  <TouchableOpacity
+                    style={styles.botonPDF}
+                    onPress={() => Linking.openURL(getPdfUrl(serv))}
+                  >
+                    <Text style={styles.botonTexto}>Ver PDF</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </TouchableOpacity>
+          ))}
         </ScrollView>
       )}
     </View>
@@ -247,8 +258,8 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   cardTerminado: {
-    backgroundColor: '#d4edda',  // Verde claro indicando completado
-    borderLeftColor: '#28a745',  // Verde para el borde izquierdo
+    backgroundColor: '#d4edda',
+    borderLeftColor: '#28a745',
   },
   textoTerminado: {
     marginTop: 8,
@@ -262,8 +273,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
   },
-  
-  
 });
 
 export default ServiciosListaScreen;

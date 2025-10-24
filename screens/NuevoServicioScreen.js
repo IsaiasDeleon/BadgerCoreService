@@ -7,9 +7,11 @@ import {
 import DropDownPicker from 'react-native-dropdown-picker';
 import { launchImageLibrary } from 'react-native-image-picker';
 import Toast from 'react-native-toast-message';
+
+// >>> PDF multiplataforma (nuevo paquete)
+import { pick, keepLocalCopy, types, isCancel } from '@react-native-documents/picker';
+
 const NuevoServicioScreen = ({ navigation, route }) => {
-
-
   const [clientes, setClientes] = useState([]);
   const [cliente, setCliente] = useState(null);
   const [openCliente, setOpenCliente] = useState(false);
@@ -54,32 +56,29 @@ const NuevoServicioScreen = ({ navigation, route }) => {
   const [descripcion, setDescripcion] = useState('');
   const [imagenes, setImagenes] = useState([]);
 
+  // PDF seleccionado
+  const [pdfFile, setPdfFile] = useState(null); // { uri, name, type }
+
   useEffect(() => {
     fetch('https://toolshop.cloud/Badger/controlador/backMovil/clientes.php?v=1')
       .then(res => res.json())
       .then(data => {
-        const opciones = data.map(c => ({
-          label: c.nombre,
-          value: c.id,
-        }));
+        const opciones = data.map(c => ({ label: c.nombre, value: c.id }));
         setClientes(data);
         setDropdownClientes(opciones);
       });
   }, []);
+
   useEffect(() => {
     if (route?.params?.idCliente) {
       setCliente(route.params.idCliente);
       obtenerContactos(route.params.idCliente);
       const seleccionado = clientes.find(c => c.id == route.params.idCliente);
       if (seleccionado) setUbicacion(seleccionado.direccion || '');
-  
-      // Espera a que los objetos carguen y luego selecciona el objeto
       obtenerObjetos(route.params.idCliente, route.params?.idObjeto || null);
     }
-  }, [route.params, clientes]);
-  
-  
-  
+  }, [route?.params, clientes]);
+
   const obtenerContactos = (idCliente) => {
     fetch(`https://toolshop.cloud/Badger/controlador/backMovil/contactosCliente.php?idCliente=${idCliente}`)
       .then(res => res.json())
@@ -102,14 +101,12 @@ const NuevoServicioScreen = ({ navigation, route }) => {
         setDropdownObjetos(opciones);
         setObjeto(null);
         setDatosObjeto([]);
-  
         if (idObjetoSeleccionado) {
           setObjeto(idObjetoSeleccionado);
           obtenerDatosObjeto(idObjetoSeleccionado);
         }
       });
   };
-  
 
   const obtenerDatosObjeto = (idObjeto) => {
     fetch(`https://toolshop.cloud/Badger/controlador/backMovil/datosExtraObjeto.php?idObjeto=${idObjeto}`)
@@ -119,13 +116,8 @@ const NuevoServicioScreen = ({ navigation, route }) => {
 
   const guardarNuevoContacto = () => {
     if (!nuevoNombre || !nuevoTelefono) {
-      return Toast.show({
-        type: 'error',
-        text1: 'Campos obligatorios',
-        text2: 'Nombre y teléfono son requeridos'
-      });
+      return Toast.show({ type: 'error', text1: 'Campos obligatorios', text2: 'Nombre y teléfono son requeridos' });
     }
-  
     fetch('https://toolshop.cloud/Badger/controlador/backMovil/agregarContacto.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -135,33 +127,16 @@ const NuevoServicioScreen = ({ navigation, route }) => {
       .then(data => {
         if (data.success) {
           setModalVisible(false);
-          setNuevoNombre('');
-          setNuevoTelefono('');
-          setNuevoCorreo('');
+          setNuevoNombre(''); setNuevoTelefono(''); setNuevoCorreo('');
           obtenerContactos(cliente);
-  
-          Toast.show({
-            type: 'success',
-            text1: 'Contacto agregado',
-            text2: 'El contacto se guardó correctamente'
-          });
+          Toast.show({ type: 'success', text1: 'Contacto agregado', text2: 'Se guardó correctamente' });
         } else {
-          Toast.show({
-            type: 'error',
-            text1: 'Error',
-            text2: 'No se pudo agregar el contacto'
-          });
+          Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo agregar el contacto' });
         }
       })
-      .catch(err => {
-        console.error(err);
-        Toast.show({
-          type: 'error',
-          text1: 'Error de red',
-          text2: 'No se pudo conectar con el servidor'
-        });
-      });
+      .catch(() => Toast.show({ type: 'error', text1: 'Error de red', text2: 'No se pudo conectar' }));
   };
+
   const seleccionarImagenes = () => {
     launchImageLibrary({ selectionLimit: 0, mediaType: 'photo' }, (response) => {
       if (response.didCancel || response.errorCode) return;
@@ -169,98 +144,156 @@ const NuevoServicioScreen = ({ navigation, route }) => {
       setImagenes(prev => [...prev, ...nuevas]);
     });
   };
-  const guardarServicio = async () => {
-    if (cargando) return;
-  
-    if (!cliente || !contacto || !objeto || !tipoServicio || !descripcion) {
-      return Toast.show({
-        type: 'error',
-        text1: 'Campos incompletos',
-        text2: 'Por favor completa todos los campos obligatorios.'
+
+  // Seleccionar PDF (Android + iOS) con el paquete nuevo
+  const seleccionarPDF = async () => {
+    try {
+      // 1) Usuario elige archivo
+      const [file] = await pick({
+        type: [types.pdf],            // puedes combinar: [types.pdf, types.docx]
+        allowMultiSelection: false,
+      });
+      if (!file) return;
+
+      // 2) (Opcional pero recomendable) mantener copia local en caché
+      let chosenUri = file.uri;
+      try {
+        const [copy] = await keepLocalCopy({
+          destination: 'cachesDirectory',
+          files: [{
+            uri: file.uri,
+            fileName: file.name || `reporte_${Date.now()}.pdf`,
+          }],
+        });
+        if (copy && copy.status === 'success') {
+          chosenUri = copy.localUri;
+        }
+      } catch (_) {
+        // Si falla la copia, seguimos usando la URI original (content:// en Android)
+      }
+
+      setPdfFile({
+        uri: chosenUri,
+        name: file.name || `reporte_${Date.now()}.pdf`,
+        type: file.mimeType || 'application/pdf',
+      });
+
+      Toast.show({ type: 'info', text1: 'PDF seleccionado', text2: file.name || 'Documento' });
+    } catch (e) {
+      if (!isCancel(e)) {
+        Toast.show({ type: 'error', text1: 'Error', text2: 'No se pudo seleccionar el PDF' });
+      }
+    }
+  };
+
+  const subirImagenesEstadoInicial = async (idServicio) => {
+    for (const uri of imagenes) {
+      const formData = new FormData();
+      formData.append('idServicio', idServicio);
+      formData.append('descripcion', 'estadoInicial');
+      formData.append('paso', 0);
+      formData.append('imagen', {
+        uri,
+        type: 'image/jpeg',
+        name: `estado_${Date.now()}.jpg`
+      });
+      await fetch('https://toolshop.cloud/Badger/controlador/backMovil/subirImagenServicio.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data' },
+        body: formData
       });
     }
-  
+  };
+
+  const subirPDFyMarcarTerminado = async (idServicio) => {
+    if (!pdfFile) return;
+    const fd = new FormData();
+    fd.append('idServicio', idServicio);
+    fd.append('pdf', {
+      uri: pdfFile.uri,
+      name: pdfFile.name,
+      type: pdfFile.type,
+    });
+    const upload = await fetch('https://toolshop.cloud/Badger/controlador/backMovil/subirPDFServicio.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data' },
+      body: fd
+    });
+    const uploadText = await upload.text();
+    let uploadJson; try { uploadJson = JSON.parse(uploadText); } catch { uploadJson = { status: 'ok' }; }
+    if (uploadJson.status !== 'ok' && uploadJson.success !== true) {
+      throw new Error('No se pudo subir el PDF');
+    }
+    const terminar = await fetch('https://toolshop.cloud/Badger/controlador/backMovil/terminarServicio2.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `idServicio=${idServicio}&terminado=1`
+    });
+    const tText = await terminar.text();
+    let tJson; try { tJson = JSON.parse(tText); } catch { tJson = { status: 'ok' }; }
+    if (tJson.status !== 'ok' && tJson.success !== true) {
+      throw new Error('No se pudo marcar como terminado');
+    }
+  };
+
+  const guardarServicio = async () => {
+    if (cargando) return;
+    if (!cliente || !contacto || !objeto || !tipoServicio || !descripcion) {
+      return Toast.show({ type: 'error', text1: 'Campos incompletos', text2: 'Completa los obligatorios.' });
+    }
+    if (pdfFile) {
+      const ok = await new Promise(resolve => {
+        Alert.alert(
+          'Confirmar',
+          'Subiste un PDF. Si continúas, el servicio se marcará como TERMINADO. ¿Deseas continuar?',
+          [{ text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+           { text: 'Sí, continuar', style: 'destructive', onPress: () => resolve(true) }],
+          { cancelable: true }
+        );
+      });
+      if (!ok) return;
+    }
     setCargando(true);
-  
     try {
       const usuarioStr = await AsyncStorage.getItem('usuario');
       const usuario = JSON.parse(usuarioStr);
       const idUsuario = usuario?.id;
-  
       if (!idUsuario) {
         setCargando(false);
-        return Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'No se pudo obtener el usuario, inicia sesión nuevamente.'
-        });
+        return Toast.show({ type: 'error', text1: 'Error', text2: 'Vuelve a iniciar sesión.' });
       }
-  
       const body = `idCliente=${cliente}&idContacto=${contacto}&idObjeto=${objeto}&tipoServicio=${encodeURIComponent(tipoServicio)}&descripcion=${encodeURIComponent(descripcion)}&estadoInicial=${encodeURIComponent(estadoInicial)}&idUsuario=${idUsuario}`;
-  
       const res = await fetch('https://toolshop.cloud/Badger/controlador/backMovil/guardarServicio.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body
       });
-  
       const text = await res.text();
       const data = JSON.parse(text);
-  
+
       if (data.status === 'success') {
         const idServicio = data.id;
-  
-        for (const uri of imagenes) {
-          const formData = new FormData();
-          formData.append('idServicio', idServicio);
-          formData.append('descripcion', 'estadoInicial');
-          formData.append('paso', 0);
-          formData.append('imagen', {
-            uri,
-            type: 'image/jpeg',
-            name: `estado_${Date.now()}.jpg`
-          });
-  
-          await fetch('https://toolshop.cloud/Badger/controlador/backMovil/subirImagenServicio.php', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'multipart/form-data'
-            },
-            body: formData
-          });
-        }
-  
+        if (imagenes.length) await subirImagenesEstadoInicial(idServicio);
+        if (pdfFile) await subirPDFyMarcarTerminado(idServicio);
+
         Toast.show({
           type: 'success',
           text1: 'Servicio guardado',
-          text2: 'El servicio se creó correctamente.'
+          text2: pdfFile ? 'PDF adjunto y servicio TERMINADO.' : 'Creado correctamente.'
         });
-  
-        setTimeout(() => {
-          navigation.navigate('Servicios');
-        }, 1500);
-        
-  
+
+        setTimeout(() => navigation.navigate('Servicios'), 1200);
       } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: data.message || 'No se pudo guardar el servicio.'
-        });
+        Toast.show({ type: 'error', text1: 'Error', text2: data.message || 'No se pudo guardar.' });
       }
-  
     } catch (error) {
       console.error(error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error de red',
-        text2: 'No se pudo conectar con el servidor.'
-      });
+      Toast.show({ type: 'error', text1: 'Error de red', text2: 'No se pudo conectar.' });
     } finally {
       setCargando(false);
     }
   };
-  
+
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       {modalVisible && (
@@ -282,16 +315,13 @@ const NuevoServicioScreen = ({ navigation, route }) => {
         </View>
       )}
 
-      <ScrollView contentContainerStyle={styles.container}
-  keyboardShouldPersistTaps="handled"
-  nestedScrollEnabled={true} >
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
         <Text style={styles.title}>Nuevo Servicio</Text>
         <View style={styles.card}>
-       
           <Text style={styles.cardTitle}>Datos del Cliente</Text>
           <TouchableOpacity style={styles.botonEscanear} onPress={() => navigation.navigate('QRServicio')}>
-          <Text style={styles.botonTexto}>📷 Escanear QR para autocompletar</Text>
-</TouchableOpacity>
+            <Text style={styles.botonTexto}>📷 Escanear QR para autocompletar</Text>
+          </TouchableOpacity>
 
           <Text style={styles.label}>Cliente</Text>
           <DropDownPicker
@@ -317,7 +347,6 @@ const NuevoServicioScreen = ({ navigation, route }) => {
 
           <Text style={styles.label}>Ubicación</Text>
           <TextInput style={styles.input} value={ubicacion} editable={false} />
-
           <View style={{ height: 3, backgroundColor: '#2e86c1', marginVertical: 12, borderRadius: 10 }} />
 
           <Text style={styles.label}>Contacto</Text>
@@ -342,26 +371,16 @@ const NuevoServicioScreen = ({ navigation, route }) => {
             zIndexInverse={1500}
           />
 
-<View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-  <View style={{ flex: 1, marginRight: 5 }}>
-    <Text style={styles.label}>Nombre del Contacto</Text>
-    <TextInput
-      style={styles.input}
-      value={contactoNombre}
-      editable={false}
-    />
-  </View>
-
-  <View style={{ flex: 1, marginLeft: 5 }}>
-    <Text style={styles.label}>Teléfono</Text>
-    <TextInput
-      style={styles.input}
-      value={contactoTelefono}
-      editable={false}
-      keyboardType="phone-pad"
-    />
-  </View>
-</View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1, marginRight: 5 }}>
+              <Text style={styles.label}>Nombre del Contacto</Text>
+              <TextInput style={styles.input} value={contactoNombre} editable={false} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 5 }}>
+              <Text style={styles.label}>Teléfono</Text>
+              <TextInput style={styles.input} value={contactoTelefono} editable={false} keyboardType="phone-pad" />
+            </View>
+          </View>
 
           <View style={{ height: 3, backgroundColor: '#2e86c1', marginVertical: 12, borderRadius: 10 }} />
 
@@ -378,22 +397,20 @@ const NuevoServicioScreen = ({ navigation, route }) => {
             listMode="SCROLLVIEW"
             zIndex={4000}
             zIndexInverse={1000}
-            
             onChangeValue={(val) => {
               setObjeto(val);
               obtenerDatosObjeto(val);
             }}
           />
 
-<View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-  {datosObjeto.map((d, idx) => (
-    <View key={idx} style={{ width: '48%', marginHorizontal: 5, marginVertical:10 }}>
-      <Text style={{ fontWeight: 'bold' }}>{d.titulo}:</Text>
-      <Text>{d.texto}</Text>
-    </View>
-  ))}
-</View>
-
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+            {datosObjeto.map((d, idx) => (
+              <View key={idx} style={{ width: '48%', marginHorizontal: 5, marginVertical: 10 }}>
+                <Text style={{ fontWeight: 'bold' }}>{d.titulo}:</Text>
+                <Text>{d.texto}</Text>
+              </View>
+            ))}
+          </View>
         </View>
 
         <Text style={styles.label}>Tipo de Servicio</Text>
@@ -403,7 +420,7 @@ const NuevoServicioScreen = ({ navigation, route }) => {
           items={tiposServicio}
           setOpen={setOpenTipo}
           setValue={setTipoServicio}
-          setItems={() => { }}
+          setItems={() => {}}
           placeholder="Selecciona un tipo de servicio"
           listMode="SCROLLVIEW"
           zIndex={1500}
@@ -425,23 +442,33 @@ const NuevoServicioScreen = ({ navigation, route }) => {
           {imagenes.map((uri, index) => (
             <View key={index} style={{ position: 'relative', marginRight: 10 }}>
               <Image source={{ uri }} style={{ width: 100, height: 100, borderRadius: 5 }} />
-              <TouchableOpacity onPress={() => setImagenes(img => img.filter((_, i) => i !== index))} style={{ position: 'absolute', top: 0, right: -6, backgroundColor: 'red', borderRadius: 12, width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}>
+              <TouchableOpacity
+                onPress={() => setImagenes(img => img.filter((_, i) => i !== index))}
+                style={{ position: 'absolute', top: 0, right: -6, backgroundColor: 'red', borderRadius: 12, width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}
+              >
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>×</Text>
               </TouchableOpacity>
             </View>
           ))}
         </ScrollView>
 
-        <TouchableOpacity
-  style={[styles.boton, cargando && { backgroundColor: '#999' }]}
-  onPress={guardarServicio}
-  disabled={cargando}
->
-  <Text style={styles.botonTexto}>
-    {cargando ? 'Guardando...' : 'Guardar Servicio'}
-  </Text>
-</TouchableOpacity>
+        {/* PDF opcional */}
+        <Text style={styles.label}>Documento PDF del servicio (opcional)</Text>
+        <Text style={styles.avisoPDF}>
+          ⚠️ Si adjuntas un PDF, al guardar el servicio se marcará como <Text style={{ fontWeight: 'bold' }}>TERMINADO</Text> automáticamente.
+        </Text>
+        <TouchableOpacity style={[styles.botonSecundario, { backgroundColor: '#6c757d' }]} onPress={seleccionarPDF}>
+          <Text style={styles.botonTexto}>{pdfFile ? 'Cambiar PDF' : 'Seleccionar PDF'}</Text>
+        </TouchableOpacity>
+        {pdfFile && <Text style={{ marginTop: 6, color: '#000' }}>Archivo: {pdfFile.name}</Text>}
 
+        <TouchableOpacity
+          style={[styles.boton, cargando && { backgroundColor: '#999' }]}
+          onPress={guardarServicio}
+          disabled={cargando}
+        >
+          <Text style={styles.botonTexto}>{cargando ? 'Guardando...' : 'Guardar Servicio'}</Text>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -455,18 +482,12 @@ const styles = StyleSheet.create({
   boton: { backgroundColor: '#205c98', padding: 10, borderRadius: 5, alignItems: 'center', marginTop: 20, marginBottom: 30 },
   botonSecundario: { backgroundColor: '#999999', padding: 10, borderRadius: 5, alignItems: 'center', marginTop: 20, marginBottom: 30 },
   botonTexto: { color: '#fff', fontWeight: 'bold' },
-  card: { backgroundColor: '#fff', borderRadius: 8, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#ddd',  },
+  card: { backgroundColor: '#fff', borderRadius: 8, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#ddd' },
   cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#000', marginBottom: 10, textAlign: 'center' },
   modalFondo: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 5000, paddingHorizontal: 20 },
   modalContenido: { backgroundColor: '#fff', padding: 20, borderRadius: 8, width: '80%', elevation: 5 },
-  botonEscanear: {
-    backgroundColor: '#205c98',
-    padding: 10,
-    borderRadius: 5,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  
+  botonEscanear: { backgroundColor: '#205c98', padding: 10, borderRadius: 5, alignItems: 'center', marginBottom: 20 },
+  avisoPDF: { marginTop: 8, color: '#c0392b', fontWeight: '600' },
 });
 
 export default NuevoServicioScreen;

@@ -12,6 +12,8 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/datetimepicker": "^8.4.2",
+    "@react-native-documents/picker": "^10.1.7",
+    "@react-native-ml-kit/text-recognition": "^2.0.0",
     "@react-native-picker/picker": "^2.11.0",
     "@react-native-vector-icons/ionicons": "^12.0.0",
     "@react-navigation/bottom-tabs": "^7.3.14",
@@ -21,6 +23,7 @@
     "react-native": "0.79.3",
     "react-native-draggable-flatlist": "^4.0.3",
     "react-native-dropdown-picker": "^5.4.6",
+    "react-native-fs": "^2.20.0",
     "react-native-gesture-handler": "^2.25.0",
     "react-native-image-picker": "^8.2.1",
     "react-native-reanimated": "^3.18.0",
